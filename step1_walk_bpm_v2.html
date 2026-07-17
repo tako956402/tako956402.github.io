@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>歩行BPM検出 - 段階1 v2</title>
+<style>
+  /* ===== 配色・書体の定義(全体で使い回す) ===== */
+  :root{
+    --bg:      #12161C;  /* 背景: 濃い青墨色 */
+    --panel:   #1B222C;  /* パネル背景 */
+    --line:    #2A3442;  /* 枠線 */
+    --text:    #E9E4D8;  /* 基本文字色 */
+    --muted:   #8B95A3;  /* 補助文字色 */
+    --accent:  #FFB454;  /* アクセント(琥珀色): BPM数字・波形 */
+    --accent2: #6FD3C7;  /* 検出ピークの印 */
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding:20px 16px 40px;
+    -webkit-user-select:none; user-select:none;
+  }
+  header{ width:100%; max-width:480px; margin-bottom:16px; }
+  header h1{ font-size:16px; font-weight:600; letter-spacing:.08em; }
+  header p{ font-size:12px; color:var(--muted); margin-top:4px; line-height:1.6; }
+
+  /* ===== BPM表示部(このページの主役) ===== */
+  .bpm-box{
+    width:100%; max-width:480px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:24px 20px 18px; text-align:center; position:relative;
+    overflow:hidden;
+  }
+  .bpm-label{ font-size:11px; letter-spacing:.25em; color:var(--muted); }
+  .bpm-value{
+    font-family:ui-monospace,"SF Mono",Consolas,monospace;
+    font-size:88px; font-weight:700; line-height:1.1; color:var(--accent);
+    font-variant-numeric:tabular-nums;
+  }
+  /* 計測確定後は色を変えて「確定値」だとわかるようにする */
+  .bpm-value.fixed{ color:var(--accent2); }
+  .bpm-unit{ font-size:13px; color:var(--muted); letter-spacing:.15em; }
+  /* 一歩検出するたびに点滅するランプ */
+  .step-lamp{
+    position:absolute; top:16px; right:16px;
+    width:12px; height:12px; border-radius:50%;
+    background:var(--line); transition:background .05s;
+  }
+  .step-lamp.on{ background:var(--accent2); box-shadow:0 0 10px var(--accent2); }
+
+  /* 計測の残り時間バー(BPMボックスの下端に表示) */
+  .progress{
+    position:absolute; left:0; bottom:0; height:4px; width:0%;
+    background:var(--accent);
+  }
+
+  .sub-info{
+    display:flex; justify-content:center; gap:20px; margin-top:10px;
+    font-size:12px; color:var(--muted);
+  }
+  .sub-info b{ color:var(--text); font-family:ui-monospace,monospace; font-weight:600; }
+
+  /* ===== 波形表示 ===== */
+  .wave-box{
+    width:100%; max-width:480px; margin-top:14px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:12px;
+  }
+  .wave-box .cap{ font-size:11px; color:var(--muted); letter-spacing:.1em; margin-bottom:6px; }
+  canvas{ width:100%; height:120px; display:block; }
+
+  /* ===== 操作ボタン ===== */
+  .controls{ width:100%; max-width:480px; margin-top:14px; display:flex; gap:10px; }
+  button{
+    flex:1; padding:14px 0; font-size:15px; font-weight:600;
+    border:none; border-radius:10px; cursor:pointer;
+    font-family:inherit;
+  }
+  #mainBtn{ background:var(--accent); color:#20180C; }
+  #mainBtn:disabled{ background:var(--line); color:var(--muted); }
+  #tapBtn{ background:var(--panel); color:var(--text); border:1px solid var(--line); }
+  #tapBtn:active{ background:var(--line); }
+  button:focus-visible{ outline:2px solid var(--accent2); outline-offset:2px; }
+
+  /* ===== 状態表示 ===== */
+  #status{
+    width:100%; max-width:480px; margin-top:14px;
+    font-size:12px; color:var(--muted); line-height:1.7;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:10px 14px; white-space:pre-wrap;
+    font-family:ui-monospace,monospace;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>歩行BPM検出(段階1 v2: 5秒計測+再計測)</h1>
+  <p>「計測を開始」を押してから歩き始めると、<b>最初の一歩から5秒間</b>だけ計測し、歩行テンポ(BPM)を確定します。PCの場合は「タップテンポ」を歩くリズムで叩いてください(スペースキーでも可)。</p>
+</header>
+
+<div class="bpm-box">
+  <div class="step-lamp" id="stepLamp"></div>
+  <div class="bpm-label" id="bpmLabel">CADENCE</div>
+  <div class="bpm-value" id="bpmValue">--</div>
+  <div class="bpm-unit">BPM (steps / min)</div>
+  <div class="sub-info">
+    <span>歩数 <b id="stepCount">0</b></span>
+    <span>残り <b id="remainSec">-</b></span>
+    <span>入力元 <b id="sourceLabel">-</b></span>
+  </div>
+  <div class="progress" id="progressBar"></div>
+</div>
+
+<div class="wave-box">
+  <div class="cap">加速度波形(重力除去後) / ●=検出した一歩</div>
+  <canvas id="waveCanvas"></canvas>
+</div>
+
+<div class="controls">
+  <button id="mainBtn">計測を開始</button>
+  <button id="tapBtn">タップテンポ</button>
+</div>
+
+<div id="status">状態: 待機中。「計測を開始」を押してください。</div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+ * 歩行BPM検出プロトタイプ v2
+ *
+ * v1からの変更点:
+ *   ・計測を「セッション」として管理する状態機械を導入
+ *       idle      : 開始前(センサー未許可)
+ *       armed     : 開始済み。最初の一歩を待っている
+ *       measuring : 最初の一歩から5秒間の計測中
+ *       done      : 計測終了。BPM確定。「もう一度計測」で armed に戻る
+ *   ・計測窓(5秒)が終わると自動で確定し、ボタンが「もう一度計測」になる
+ *
+ * BPM算出の考え方(v1と同じ):
+ *   加速度の大きさ → 重力成分をEMAで除去 → 平滑化 →
+ *   しきい値の上向き交差で一歩検出(不応期あり) →
+ *   歩の間隔の中央値から BPM = 60000 / 間隔(ms)
+ * ===================================================================== */
+
+/* ---------- 画面要素 ---------- */
+const bpmValue   = document.getElementById("bpmValue");
+const bpmLabel   = document.getElementById("bpmLabel");
+const stepCount  = document.getElementById("stepCount");
+const remainSec  = document.getElementById("remainSec");
+const sourceLabel= document.getElementById("sourceLabel");
+const stepLamp   = document.getElementById("stepLamp");
+const statusBox  = document.getElementById("status");
+const mainBtn    = document.getElementById("mainBtn");
+const tapBtn     = document.getElementById("tapBtn");
+const progressBar= document.getElementById("progressBar");
+const canvas     = document.getElementById("waveCanvas");
+const ctx        = canvas.getContext("2d");
+
+function setStatus(msg){ statusBox.textContent = "状態: " + msg; }
+
+/* ---------- 調整用パラメータ ---------- */
+const GRAVITY_ALPHA   = 0.05;  // 重力推定EMAの追従速度
+const SMOOTH_ALPHA    = 0.30;  // ノイズ除去EMAの追従速度
+const THRESHOLD       = 1.2;   // 一歩とみなす揺れの大きさ [m/s^2]
+const REFRACTORY_MS   = 280;   // 一歩検出後の不応期
+const MEASURE_MS      = 5000;  // ★計測窓: 最初の一歩からこの時間で終了
+const MIN_STEPS       = 4;     // BPM確定に最低限必要な歩数
+const BPM_MIN = 40, BPM_MAX = 220;
+
+/* ---------- セッション管理 ---------- */
+let state = "idle";          // idle / armed / measuring / done
+let sensorActive = false;    // devicemotionリスナーを登録済みか
+let sessionStart = 0;        // 計測窓の開始時刻(最初の一歩の時刻)
+let sessionTimer = null;     // 残り時間更新用タイマー
+let stepTimes = [];          // このセッションで検出した歩の時刻
+
+/* ---------- 信号処理用の状態変数 ---------- */
+let gravityEst = null;
+let smoothVal  = 0;
+let lastStepTime = -1;
+let wasAbove   = false;
+
+/* 波形描画用のリングバッファ */
+const WAVE_LEN = 300;
+const waveBuf  = new Float32Array(WAVE_LEN);
+const peakBuf  = new Uint8Array(WAVE_LEN);
+let waveIdx = 0;
+
+/* =====================================================================
+ * セッションの開始・終了
+ * ===================================================================== */
+function armSession(){
+  state = "armed";
+  stepTimes = [];
+  sessionStart = 0;
+  stepCount.textContent = "0";
+  remainSec.textContent = "-";
+  sourceLabel.textContent = "-";
+  bpmValue.textContent = "--";
+  bpmValue.classList.remove("fixed");
+  bpmLabel.textContent = "CADENCE";
+  progressBar.style.width = "0%";
+  mainBtn.disabled = true;
+  mainBtn.textContent = "計測中...";
+  setStatus("歩き始めてください。最初の一歩から5秒間計測します。\n(PCはタップテンポ/スペースキー)");
+}
+
+/* 最初の一歩が来たら呼ばれる: 5秒の計測窓を開始 */
+function beginWindow(now){
+  state = "measuring";
+  sessionStart = now;
+  // 100msごとに残り時間とバーを更新し、5秒経ったら確定する
+  sessionTimer = setInterval(()=>{
+    const elapsed = performance.now() - sessionStart;
+    const remain  = Math.max(0, MEASURE_MS - elapsed);
+    remainSec.textContent = (remain/1000).toFixed(1) + "s";
+    progressBar.style.width = (elapsed/MEASURE_MS*100) + "%";
+    if (elapsed >= MEASURE_MS) finishSession();
+  }, 100);
+}
+
+/* 計測窓の終了: BPMを確定して done 状態へ */
+function finishSession(){
+  clearInterval(sessionTimer);
+  sessionTimer = null;
+  state = "done";
+  remainSec.textContent = "0.0s";
+  progressBar.style.width = "100%";
+  mainBtn.disabled = false;
+  mainBtn.textContent = "もう一度計測";
+
+  const bpm = calcBPM();
+  if (bpm === null){
+    bpmValue.textContent = "--";
+    setStatus("歩数が足りず計測できませんでした(" + stepTimes.length +
+      "歩)。「もう一度計測」を押して、歩き出してからスマホが揺れるように持ってください。");
+  }else{
+    bpmValue.textContent = bpm;
+    bpmValue.classList.add("fixed");
+    bpmLabel.textContent = "RESULT";
+    setStatus("計測終了: " + bpm + " BPM(" + stepTimes.length + "歩から算出)。\n" +
+      "「もう一度計測」で測り直せます。");
+  }
+}
+
+/* =====================================================================
+ * 一歩(またはタップ)の記録
+ * ===================================================================== */
+function registerStep(now, source){
+  // armed: この一歩が計測窓のスタート合図になる
+  if (state === "armed"){
+    beginWindow(now);
+  }else if (state !== "measuring"){
+    return;  // 計測中以外の歩は無視(done中の誤反応防止)
+  }
+
+  stepTimes.push(now);
+  stepCount.textContent = stepTimes.length;
+  sourceLabel.textContent = source;
+
+  // 検出ランプを一瞬光らせる
+  stepLamp.classList.add("on");
+  setTimeout(()=> stepLamp.classList.remove("on"), 120);
+
+  // 計測中もBPMの途中経過を表示する(確定前のプレビュー)
+  const bpm = calcBPM();
+  if (bpm !== null) bpmValue.textContent = bpm;
+}
+
+/* 歩の間隔の「中央値」からBPMを計算する。
+ * 平均値ではなく中央値を使うのは、1回の誤検出に引きずられにくくするため。
+ * 歩数が MIN_STEPS 未満、または結果が妥当範囲外なら null を返す。 */
+function calcBPM(){
+  if (stepTimes.length < MIN_STEPS) return null;
+  const intervals = [];
+  for (let i = 1; i < stepTimes.length; i++){
+    intervals.push(stepTimes[i] - stepTimes[i-1]);
+  }
+  intervals.sort((a,b)=>a-b);
+  const mid = Math.floor(intervals.length / 2);
+  const median = (intervals.length % 2 === 0)
+    ? (intervals[mid-1] + intervals[mid]) / 2
+    : intervals[mid];
+  const bpm = Math.round(60000 / median);
+  return (bpm < BPM_MIN || bpm > BPM_MAX) ? null : bpm;
+}
+
+/* =====================================================================
+ * 加速度センサー(DeviceMotion)まわり
+ * ===================================================================== */
+function onMotion(e){
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x === null) return;
+
+  // 3軸の大きさ(向きに依存しないようベクトルの長さを使う)
+  const mag = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
+
+  // 重力成分をゆっくり追従するEMAで推定して除去
+  if (gravityEst === null) gravityEst = mag;
+  gravityEst = gravityEst + GRAVITY_ALPHA * (mag - gravityEst);
+  const band = mag - gravityEst;
+
+  // 速いEMAで細かいノイズをならす
+  smoothVal = smoothVal + SMOOTH_ALPHA * (band - smoothVal);
+
+  // 波形バッファに記録(状態に関わらず常時描画する)
+  waveBuf[waveIdx] = smoothVal;
+  peakBuf[waveIdx] = 0;
+
+  // 一歩検出: しきい値の上向き交差+不応期
+  const now = performance.now();
+  const above = smoothVal > THRESHOLD;
+  if (above && !wasAbove && (now - lastStepTime) > REFRACTORY_MS){
+    lastStepTime = now;
+    if (state === "armed" || state === "measuring"){
+      registerStep(now, "センサー");
+      peakBuf[waveIdx] = 1;
+    }
+  }
+  wasAbove = above;
+  waveIdx = (waveIdx + 1) % WAVE_LEN;
+}
+
+/* センサーの許可を取ってリスナーを登録する(初回のみ) */
+async function enableSensor(){
+  if (typeof DeviceMotionEvent === "undefined"){
+    setStatus("このデバイスは加速度センサーに対応していません。\nタップテンポを使ってください。");
+    return true;  // タップ用にセッション自体は開始する
+  }
+  // iOS(13以降)はユーザー操作の中で許可を求める必要がある
+  if (typeof DeviceMotionEvent.requestPermission === "function"){
+    try{
+      const res = await DeviceMotionEvent.requestPermission();
+      if (res !== "granted"){
+        setStatus("センサーの使用が許可されませんでした。タップテンポは使えます。");
+        return true;
+      }
+    }catch(err){
+      setStatus("許可の取得に失敗: " + err.message +
+        "\n(HTTPSでアクセスしているか確認してください)");
+      return true;
+    }
+  }
+  window.addEventListener("devicemotion", onMotion);
+  sensorActive = true;
+  return true;
+}
+
+/* メインボタン: 初回は許可+計測開始、2回目以降は再計測 */
+mainBtn.addEventListener("click", async ()=>{
+  if (!sensorActive && state === "idle"){
+    await enableSensor();
+  }
+  armSession();
+});
+
+/* =====================================================================
+ * タップテンポ(PC用フォールバック)
+ * 最初のタップで計測窓が始まり、5秒後に自動確定(センサーと同じ流れ)
+ * ===================================================================== */
+function onTap(){
+  // 開始ボタンを押していなくてもタップだけで計測できるようにする
+  if (state === "idle") armSession();
+  registerStep(performance.now(), "タップ");
+}
+tapBtn.addEventListener("click", onTap);
+window.addEventListener("keydown", (e)=>{
+  if (e.code === "Space"){
+    e.preventDefault();  // 画面スクロールを防ぐ
+    onTap();
+  }
+});
+
+/* =====================================================================
+ * 波形の描画(常時ループ)
+ * ===================================================================== */
+function resizeCanvas(){
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = canvas.clientWidth  * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+function drawWave(){
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  const midY  = h * 0.55;
+  const scale = h * 0.10;
+
+  // しきい値の線
+  ctx.strokeStyle = "#3A4656";
+  ctx.setLineDash([4,4]);
+  ctx.beginPath();
+  ctx.moveTo(0, midY - THRESHOLD*scale);
+  ctx.lineTo(w, midY - THRESHOLD*scale);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 波形本体
+  ctx.strokeStyle = "#FFB454";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < WAVE_LEN; i++){
+    const idx = (waveIdx + i) % WAVE_LEN;
+    const x = (i / (WAVE_LEN-1)) * w;
+    const y = midY - waveBuf[idx]*scale;
+    (i === 0) ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // 一歩検出した位置に印
+  ctx.fillStyle = "#6FD3C7";
+  for (let i = 0; i < WAVE_LEN; i++){
+    const idx = (waveIdx + i) % WAVE_LEN;
+    if (peakBuf[idx]){
+      const x = (i / (WAVE_LEN-1)) * w;
+      const y = midY - waveBuf[idx]*scale;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+  requestAnimationFrame(drawWave);
+}
+requestAnimationFrame(drawWave);
+</script>
+</body>
+</html>
