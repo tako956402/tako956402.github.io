@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>歩行BPM決定 - 段階1 v4</title>
+<style>
+  /* ===== 配色・書体の定義(全体で使い回す) ===== */
+  :root{
+    --bg:      #12161C;  /* 背景: 濃い青墨色 */
+    --panel:   #1B222C;  /* パネル背景 */
+    --line:    #2A3442;  /* 枠線 */
+    --text:    #E9E4D8;  /* 基本文字色 */
+    --muted:   #8B95A3;  /* 補助文字色 */
+    --accent:  #FFB454;  /* アクセント(琥珀色): BPM数字・波形 */
+    --accent2: #6FD3C7;  /* 確定値・検出ピークの印 */
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding:20px 16px 40px;
+    -webkit-user-select:none; user-select:none;
+  }
+  header{ width:100%; max-width:480px; margin-bottom:14px; }
+  header h1{ font-size:16px; font-weight:600; letter-spacing:.08em; }
+  header p{ font-size:12px; color:var(--muted); margin-top:4px; line-height:1.6; }
+
+  /* ===== 方式切り替えタブ ===== */
+  .tabs{
+    width:100%; max-width:480px; display:flex; gap:6px;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:5px; margin-bottom:14px;
+  }
+  .tabs button{
+    flex:1; padding:10px 0; font-size:13px; font-weight:600;
+    border:none; border-radius:7px; cursor:pointer; font-family:inherit;
+    background:transparent; color:var(--muted);
+  }
+  .tabs button.active{ background:var(--accent); color:#20180C; }
+  .tabs button:focus-visible{ outline:2px solid var(--accent2); outline-offset:2px; }
+
+  /* ===== BPM表示部(共通・このページの主役) ===== */
+  .bpm-box{
+    width:100%; max-width:480px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:24px 20px 18px; text-align:center; position:relative;
+    overflow:hidden;
+  }
+  .bpm-label{ font-size:11px; letter-spacing:.25em; color:var(--muted); }
+  .bpm-value{
+    font-family:ui-monospace,"SF Mono",Consolas,monospace;
+    font-size:88px; font-weight:700; line-height:1.1; color:var(--accent);
+    font-variant-numeric:tabular-nums;
+  }
+  .bpm-value.fixed{ color:var(--accent2); }
+  .bpm-unit{ font-size:13px; color:var(--muted); letter-spacing:.15em; }
+  .step-lamp{
+    position:absolute; top:16px; right:16px;
+    width:12px; height:12px; border-radius:50%;
+    background:var(--line); transition:background .05s;
+  }
+  .step-lamp.on{ background:var(--accent2); box-shadow:0 0 10px var(--accent2); }
+  .progress{
+    position:absolute; left:0; bottom:0; height:4px; width:0%;
+    background:var(--accent); transition:width .15s;
+  }
+  .sub-info{
+    display:flex; justify-content:center; gap:24px; margin-top:10px;
+    font-size:12px; color:var(--muted);
+  }
+  .sub-info b{ color:var(--text); font-family:ui-monospace,monospace; font-weight:600; }
+
+  /* ===== パネル(タブごとに表示切り替え) ===== */
+  .pane{ width:100%; max-width:480px; }
+  .pane.hidden{ display:none; }
+
+  /* ===== 波形表示(自動計測タブのみ) ===== */
+  .wave-box{
+    width:100%; margin-top:14px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:12px;
+  }
+  .wave-box .cap{ font-size:11px; color:var(--muted); letter-spacing:.1em; margin-bottom:6px; }
+  canvas{ width:100%; height:120px; display:block; }
+
+  .controls{ width:100%; margin-top:14px; display:flex; }
+  .controls button{
+    flex:1; padding:14px 0; font-size:15px; font-weight:600;
+    border:none; border-radius:10px; cursor:pointer; font-family:inherit;
+    background:var(--accent); color:#20180C;
+  }
+  .controls button:disabled{ background:var(--line); color:var(--muted); }
+  .controls button:focus-visible{ outline:2px solid var(--accent2); outline-offset:2px; }
+
+  /* ===== モード選択タブ ===== */
+  .mode-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;
+  }
+  .mode-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:16px 14px; cursor:pointer; text-align:left; font-family:inherit;
+    color:var(--text);
+  }
+  .mode-card:active{ background:var(--line); }
+  .mode-card.selected{ border-color:var(--accent); }
+  .mode-card .m-name{ font-size:15px; font-weight:600; }
+  .mode-card .m-range{
+    font-size:12px; color:var(--muted); margin-top:4px;
+    font-family:ui-monospace,monospace;
+  }
+  .mode-card:focus-visible{ outline:2px solid var(--accent2); outline-offset:2px; }
+
+  /* ===== 状態表示 ===== */
+  #status{
+    width:100%; max-width:480px; margin-top:14px;
+    font-size:12px; color:var(--muted); line-height:1.7;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:10px 14px; white-space:pre-wrap;
+    font-family:ui-monospace,monospace;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>歩行BPM決定(段階1 v4: 自動計測+モード選択)</h1>
+  <p>センサーで歩行テンポを実測する<b>自動計測</b>と、活動の種類から典型的なテンポを決める<b>モード選択</b>の2方式でBPMを決められます。</p>
+</header>
+
+<div class="tabs">
+  <button id="tabAuto" class="active">自動計測</button>
+  <button id="tabMode">モード選択</button>
+</div>
+
+<div class="bpm-box">
+  <div class="step-lamp" id="stepLamp"></div>
+  <div class="bpm-label" id="bpmLabel">CADENCE</div>
+  <div class="bpm-value" id="bpmValue">--</div>
+  <div class="bpm-unit">BPM (steps / min)</div>
+  <div class="sub-info" id="autoInfo">
+    <span>準備 <b id="warmupCount">0/2</b></span>
+    <span>計測 <b id="measureCount">0/4</b></span>
+  </div>
+  <div class="progress" id="progressBar"></div>
+</div>
+
+<!-- ===== 自動計測パネル ===== -->
+<div class="pane" id="paneAuto">
+  <div class="wave-box">
+    <div class="cap">加速度波形(重力除去後) / ●=検出した一歩</div>
+    <canvas id="waveCanvas"></canvas>
+  </div>
+  <div class="controls">
+    <button id="mainBtn">計測を開始</button>
+  </div>
+</div>
+
+<!-- ===== モード選択パネル ===== -->
+<div class="pane hidden" id="paneMode">
+  <div class="mode-grid" id="modeGrid"><!-- JSで生成 --></div>
+</div>
+
+<div id="status">状態: 待機中。方式を選んでBPMを決定してください。</div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+ * 歩行BPM決定 v4
+ *
+ * v3からの変更点:
+ *   ・「自動計測」(センサー実測)と「モード選択」の2方式をタブで切り替え
+ *   ・モード選択: 活動の種類ごとに典型的なケイデンス範囲を定義し、
+ *     その範囲内から一様乱数でBPMを決定する
+ *       → 毎回同じBPMにならないため、後段の選曲に揺らぎが生まれ、
+ *         「新しい音楽との出会い」につながる設計
+ *   ・どちらの方式で決めても、最終的なBPMは共通の表示部に確定される
+ *     (後段(段階2)はこの確定BPMだけを受け取ればよい)
+ * ===================================================================== */
+
+/* ---------- 最終的に確定したBPM(段階2へ渡す値) ---------- */
+let finalBPM = null;
+
+/* ---------- 画面要素 ---------- */
+const bpmValue    = document.getElementById("bpmValue");
+const bpmLabel    = document.getElementById("bpmLabel");
+const warmupCount = document.getElementById("warmupCount");
+const measureCount= document.getElementById("measureCount");
+const stepLamp    = document.getElementById("stepLamp");
+const statusBox   = document.getElementById("status");
+const mainBtn     = document.getElementById("mainBtn");
+const progressBar = document.getElementById("progressBar");
+const autoInfo    = document.getElementById("autoInfo");
+const canvas      = document.getElementById("waveCanvas");
+const ctx         = canvas.getContext("2d");
+
+const tabAuto  = document.getElementById("tabAuto");
+const tabMode  = document.getElementById("tabMode");
+const paneAuto = document.getElementById("paneAuto");
+const paneMode = document.getElementById("paneMode");
+const modeGrid = document.getElementById("modeGrid");
+
+function setStatus(msg){ statusBox.textContent = "状態: " + msg; }
+
+/* =====================================================================
+ * モード選択方式
+ * 各モードの範囲は一般的な歩行ケイデンス(両足カウントの歩数/分)の目安
+ * ===================================================================== */
+const MODES = [
+  { name:"散歩",       min: 90, max:105 },
+  { name:"普通の歩行", min:105, max:120 },
+  { name:"早歩き",     min:120, max:135 },
+  { name:"ジョギング", min:150, max:170 },
+];
+
+/* モードカードをJSで生成する */
+MODES.forEach((m, i)=>{
+  const btn = document.createElement("button");
+  btn.className = "mode-card";
+  btn.innerHTML =
+    '<div class="m-name">' + m.name + '</div>' +
+    '<div class="m-range">' + m.min + "–" + m.max + ' BPM</div>';
+  btn.addEventListener("click", ()=> pickMode(i));
+  modeGrid.appendChild(btn);
+});
+
+/* モードを選ぶと、その範囲内の一様乱数でBPMを決定する。
+ * 固定値にしないのは、同じモードでも毎回少し違う曲が
+ * 推薦されるようにするため(新規開拓のための意図的な揺らぎ)。 */
+function pickMode(i){
+  const m = MODES[i];
+  // min以上max以下の整数乱数
+  const bpm = m.min + Math.floor(Math.random() * (m.max - m.min + 1));
+  fixBPM(bpm, m.name + "モード(" + m.min + "–" + m.max + "の範囲から抽選)");
+
+  // 選択中カードの見た目を更新
+  [...modeGrid.children].forEach((c, j)=>
+    c.classList.toggle("selected", j === i));
+}
+
+/* =====================================================================
+ * BPMの確定(両方式の共通ゴール)
+ * ===================================================================== */
+function fixBPM(bpm, sourceText){
+  finalBPM = bpm;
+  bpmValue.textContent = bpm;
+  bpmValue.classList.add("fixed");
+  bpmLabel.textContent = "RESULT";
+  setStatus("BPM確定: " + bpm + "(" + sourceText + ")\n" +
+    "※段階2では、この値を使って選曲します。");
+}
+
+function resetBPMDisplay(){
+  finalBPM = null;
+  bpmValue.textContent = "--";
+  bpmValue.classList.remove("fixed");
+  bpmLabel.textContent = "CADENCE";
+}
+
+/* =====================================================================
+ * タブ切り替え
+ * ===================================================================== */
+function switchTab(auto){
+  tabAuto.classList.toggle("active", auto);
+  tabMode.classList.toggle("active", !auto);
+  paneAuto.classList.toggle("hidden", !auto);
+  paneMode.classList.toggle("hidden", auto);
+  autoInfo.style.visibility = auto ? "visible" : "hidden";
+  progressBar.style.width = "0%";
+}
+tabAuto.addEventListener("click", ()=> switchTab(true));
+tabMode.addEventListener("click", ()=> switchTab(false));
+
+/* =====================================================================
+ * 自動計測方式(v3と同じロジック)
+ * 状態遷移: idle → warmup(準備2歩) → measuring(4歩) → done
+ * ===================================================================== */
+const GRAVITY_ALPHA = 0.05;  // 重力推定EMAの追従速度
+const SMOOTH_ALPHA  = 0.30;  // ノイズ除去EMAの追従速度
+const THRESHOLD     = 1.2;   // 一歩とみなす揺れの大きさ [m/s^2]
+const REFRACTORY_MS = 280;   // 一歩検出後の不応期
+const WARMUP_STEPS  = 2;     // 捨てる準備歩数(ポケット収納時の誤検出対策)
+const MEASURE_STEPS = 4;     // BPM算出に使う歩数
+const MAX_GAP_MS    = 3000;  // 歩が途切れたとみなす間隔
+const BPM_MIN = 40, BPM_MAX = 220;
+
+let state = "idle";
+let sensorActive = false;
+let warmupSteps  = 0;
+let measureTimes = [];
+
+let gravityEst = null;
+let smoothVal  = 0;
+let lastStepTime = -1;
+let wasAbove   = false;
+
+const WAVE_LEN = 300;
+const waveBuf  = new Float32Array(WAVE_LEN);
+const peakBuf  = new Uint8Array(WAVE_LEN);
+let waveIdx = 0;
+
+function armSession(){
+  state = "warmup";
+  warmupSteps = 0;
+  measureTimes = [];
+  updateCounters();
+  resetBPMDisplay();
+  progressBar.style.width = "0%";
+  mainBtn.disabled = true;
+  mainBtn.textContent = "計測中...";
+  setStatus("歩き始めてください。最初の2歩は準備、続く4歩で計測します。");
+}
+
+function updateCounters(){
+  warmupCount.textContent  = warmupSteps + "/" + WARMUP_STEPS;
+  measureCount.textContent = measureTimes.length + "/" + MEASURE_STEPS;
+  const total = WARMUP_STEPS + MEASURE_STEPS;
+  progressBar.style.width = ((warmupSteps + measureTimes.length) / total * 100) + "%";
+}
+
+function registerStep(now){
+  // 立ち止まり検出: 前の歩から時間が空きすぎたら準備からやり直す
+  const prevTime = (measureTimes.length > 0)
+    ? measureTimes[measureTimes.length - 1]
+    : null;
+  if (prevTime !== null && now - prevTime > MAX_GAP_MS){
+    warmupSteps = 0;
+    measureTimes = [];
+    setStatus("歩行が途切れたため、準備からやり直します。");
+  }
+
+  stepLamp.classList.add("on");
+  setTimeout(()=> stepLamp.classList.remove("on"), 120);
+
+  if (state === "warmup"){
+    warmupSteps++;
+    if (warmupSteps >= WARMUP_STEPS){
+      state = "measuring";
+      setStatus("計測中... あと" + MEASURE_STEPS + "歩そのまま歩いてください。");
+    }
+  }else if (state === "measuring"){
+    measureTimes.push(now);
+    if (measureTimes.length >= MEASURE_STEPS){
+      finishSession();
+    }
+  }
+  updateCounters();
+}
+
+/* 計測終了: 歩の間隔の中央値からBPMを確定する。
+ * 平均値ではなく中央値を使うのは、1回の誤検出に引きずられにくくするため。 */
+function finishSession(){
+  state = "done";
+  mainBtn.disabled = false;
+  mainBtn.textContent = "もう一度計測";
+
+  const intervals = [];
+  for (let i = 1; i < measureTimes.length; i++){
+    intervals.push(measureTimes[i] - measureTimes[i-1]);
+  }
+  intervals.sort((a,b)=>a-b);
+  const mid = Math.floor(intervals.length / 2);
+  const median = (intervals.length % 2 === 0)
+    ? (intervals[mid-1] + intervals[mid]) / 2
+    : intervals[mid];
+  const bpm = Math.round(60000 / median);
+
+  if (bpm < BPM_MIN || bpm > BPM_MAX){
+    resetBPMDisplay();
+    setStatus("計測値(" + bpm + " BPM)が歩行として不自然なため無効としました。\n「もう一度計測」でやり直してください。");
+    return;
+  }
+  fixBPM(bpm, "自動計測: " + MEASURE_STEPS + "歩から算出");
+}
+
+function onMotion(e){
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x === null) return;
+
+  // 3軸の大きさ(向きに依存しないようベクトルの長さを使う)
+  const mag = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
+
+  // 重力成分をゆっくり追従するEMAで推定して除去
+  if (gravityEst === null) gravityEst = mag;
+  gravityEst = gravityEst + GRAVITY_ALPHA * (mag - gravityEst);
+  const band = mag - gravityEst;
+
+  // 速いEMAで細かいノイズをならす
+  smoothVal = smoothVal + SMOOTH_ALPHA * (band - smoothVal);
+
+  waveBuf[waveIdx] = smoothVal;
+  peakBuf[waveIdx] = 0;
+
+  // 一歩検出: しきい値の上向き交差+不応期
+  const now = performance.now();
+  const above = smoothVal > THRESHOLD;
+  if (above && !wasAbove && (now - lastStepTime) > REFRACTORY_MS){
+    lastStepTime = now;
+    if (state === "warmup" || state === "measuring"){
+      registerStep(now);
+      peakBuf[waveIdx] = 1;
+    }
+  }
+  wasAbove = above;
+  waveIdx = (waveIdx + 1) % WAVE_LEN;
+}
+
+async function enableSensor(){
+  if (typeof DeviceMotionEvent === "undefined"){
+    setStatus("このデバイスは加速度センサーに対応していません。\n「モード選択」タブを使ってください。");
+    return false;
+  }
+  // iOS(13以降)はユーザー操作の中で許可を求める必要がある
+  if (typeof DeviceMotionEvent.requestPermission === "function"){
+    try{
+      const res = await DeviceMotionEvent.requestPermission();
+      if (res !== "granted"){
+        setStatus("センサーの使用が許可されませんでした。「モード選択」タブは使えます。");
+        return false;
+      }
+    }catch(err){
+      setStatus("許可の取得に失敗: " + err.message +
+        "\n(HTTPSでアクセスしているか確認してください)");
+      return false;
+    }
+  }
+  window.addEventListener("devicemotion", onMotion);
+  sensorActive = true;
+  return true;
+}
+
+mainBtn.addEventListener("click", async ()=>{
+  if (!sensorActive){
+    const ok = await enableSensor();
+    if (!ok) return;
+  }
+  armSession();
+});
+
+/* =====================================================================
+ * 波形の描画(常時ループ)
+ * ===================================================================== */
+function resizeCanvas(){
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = canvas.clientWidth  * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+function drawWave(){
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  const midY  = h * 0.55;
+  const scale = h * 0.10;
+
+  ctx.strokeStyle = "#3A4656";
+  ctx.setLineDash([4,4]);
+  ctx.beginPath();
+  ctx.moveTo(0, midY - THRESHOLD*scale);
+  ctx.lineTo(w, midY - THRESHOLD*scale);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = "#FFB454";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < WAVE_LEN; i++){
+    const idx = (waveIdx + i) % WAVE_LEN;
+    const x = (i / (WAVE_LEN-1)) * w;
+    const y = midY - waveBuf[idx]*scale;
+    (i === 0) ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = "#6FD3C7";
+  for (let i = 0; i < WAVE_LEN; i++){
+    const idx = (waveIdx + i) % WAVE_LEN;
+    if (peakBuf[idx]){
+      const x = (i / (WAVE_LEN-1)) * w;
+      const y = midY - waveBuf[idx]*scale;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+  requestAnimationFrame(drawWave);
+}
+requestAnimationFrame(drawWave);
+</script>
+</body>
+</html>
