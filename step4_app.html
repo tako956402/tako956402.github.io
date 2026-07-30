@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>歩行テンポ連動 音楽推薦プレイヤー</title>
+<style>
+  /* ===== 配色・書体(全段階共通) ===== */
+  :root{
+    --bg:      #12161C;
+    --panel:   #1B222C;
+    --line:    #2A3442;
+    --text:    #E9E4D8;
+    --muted:   #8B95A3;
+    --accent:  #FFB454;
+    --accent2: #6FD3C7;
+    --warn:    #E5C07B;
+    --danger:  #E06C75;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding:20px 16px 24px;
+    -webkit-user-select:none; user-select:none;
+  }
+  header{ width:100%; max-width:520px; margin-bottom:14px; }
+  header h1{ font-size:17px; font-weight:700; letter-spacing:.06em; }
+  header p{ font-size:12px; color:var(--muted); margin-top:4px; line-height:1.6; }
+
+  .box{
+    width:100%; max-width:520px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:14px; margin-bottom:12px;
+  }
+  .box .cap{ font-size:11px; color:var(--muted); letter-spacing:.15em; margin-bottom:8px; }
+
+  /* ===== タブ ===== */
+  .tabs{
+    width:100%; max-width:520px; display:flex; gap:6px;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:5px; margin-bottom:12px;
+  }
+  .tabs button{
+    flex:1; padding:10px 0; font-size:13px; font-weight:600;
+    border:none; border-radius:7px; cursor:pointer; font-family:inherit;
+    background:transparent; color:var(--muted);
+  }
+  .tabs button.active{ background:var(--accent); color:#20180C; }
+
+  /* ===== BPM表示 ===== */
+  .bpm-box{
+    width:100%; max-width:520px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:18px 16px 14px; text-align:center; position:relative; overflow:hidden;
+    margin-bottom:12px;
+  }
+  .bpm-label{ font-size:11px; letter-spacing:.25em; color:var(--muted); }
+  .bpm-value{
+    font-family:ui-monospace,"SF Mono",Consolas,monospace;
+    font-size:64px; font-weight:700; line-height:1.1; color:var(--accent);
+    font-variant-numeric:tabular-nums;
+  }
+  .bpm-value.fixed{ color:var(--accent2); }
+  .bpm-unit{ font-size:12px; color:var(--muted); letter-spacing:.15em; }
+  .step-lamp{
+    position:absolute; top:14px; right:14px;
+    width:11px; height:11px; border-radius:50%;
+    background:var(--line); transition:background .05s;
+  }
+  .step-lamp.on{ background:var(--accent2); box-shadow:0 0 10px var(--accent2); }
+  .progress{
+    position:absolute; left:0; bottom:0; height:4px; width:0%;
+    background:var(--accent); transition:width .15s;
+  }
+  .sub-info{
+    display:flex; justify-content:center; gap:22px; margin-top:8px;
+    font-size:12px; color:var(--muted);
+  }
+  .sub-info b{ color:var(--text); font-family:ui-monospace,monospace; font-weight:600; }
+
+  .pane{ width:100%; max-width:520px; }
+  .pane.hidden{ display:none; }
+
+  .wave-box{
+    width:100%; margin-bottom:12px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:10px;
+  }
+  .wave-box .cap{ font-size:11px; color:var(--muted); letter-spacing:.1em; margin-bottom:4px; }
+  canvas{ width:100%; height:90px; display:block; }
+
+  .controls{ width:100%; display:flex; gap:8px; margin-bottom:12px; }
+  .controls button, button.primary{
+    flex:1; padding:13px 0; font-size:15px; font-weight:600; font-family:inherit;
+    border:none; border-radius:10px; cursor:pointer;
+    background:var(--accent); color:#20180C;
+  }
+  .controls button:disabled, button.primary:disabled{
+    background:var(--line); color:var(--muted);
+  }
+  button:focus-visible{ outline:2px solid var(--accent2); outline-offset:2px; }
+
+  .mode-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+  .mode-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:13px 12px; cursor:pointer; text-align:left; font-family:inherit;
+    color:var(--text);
+  }
+  .mode-card:active{ background:var(--line); }
+  .mode-card.selected{ border-color:var(--accent); }
+  .mode-card .m-name{ font-size:14px; font-weight:600; }
+  .mode-card .m-range{
+    font-size:11px; color:var(--muted); margin-top:3px;
+    font-family:ui-monospace,monospace;
+  }
+
+  /* ===== 設定 ===== */
+  label{ font-size:12px; color:var(--muted); display:block; margin-bottom:4px; margin-top:10px; }
+  label:first-of-type{ margin-top:0; }
+  input[type="password"], input[type="number"]{
+    width:100%; padding:9px 12px; font-size:14px;
+    background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:8px;
+    font-family:ui-monospace,monospace;
+  }
+  .row{ display:flex; gap:10px; }
+  .row > div{ flex:1; }
+  details > summary{
+    font-size:12px; color:var(--muted); cursor:pointer; letter-spacing:.1em;
+  }
+
+  /* ===== プレイヤー ===== */
+  .now{
+    display:flex; gap:12px; align-items:center; margin-bottom:10px;
+  }
+  .now img{
+    width:72px; height:72px; border-radius:10px; flex-shrink:0;
+    background:var(--line);
+  }
+  .now .t{ font-size:15px; font-weight:700; }
+  .now .a{ font-size:12px; color:var(--muted); margin-top:2px; }
+  .now .meta{
+    font-size:11px; color:var(--accent2); margin-top:4px;
+    font-family:ui-monospace,monospace;
+  }
+  .now .reason{ font-size:12px; color:var(--muted); margin-top:4px; line-height:1.5; }
+  .player-controls{ display:flex; gap:8px; }
+  .player-controls button{
+    flex:1; padding:11px 0; font-size:14px; font-weight:600; font-family:inherit;
+    border:1px solid var(--line); border-radius:10px; cursor:pointer;
+    background:var(--panel); color:var(--text);
+  }
+  .player-controls button.main{ background:var(--accent2); color:#0E2320; border:none; }
+  .player-controls button:disabled{ background:var(--line); color:var(--muted); }
+
+  .qitem{
+    display:flex; gap:10px; padding:9px; align-items:center;
+    border:1px solid var(--line); border-radius:10px; margin-bottom:7px;
+    background:var(--bg); cursor:pointer;
+  }
+  .qitem.playing{ border-color:var(--accent2); }
+  .qitem img{ width:42px; height:42px; border-radius:7px; background:var(--line); }
+  .qitem .t{ font-size:13px; font-weight:600; }
+  .qitem .a{ font-size:11px; color:var(--muted); }
+  .qitem .m{
+    margin-left:auto; font-size:10px; color:var(--accent2);
+    font-family:ui-monospace,monospace; text-align:right; flex-shrink:0;
+  }
+  .qitem .m.unv{ color:var(--warn); }
+
+  #log{
+    font-size:11px; line-height:1.8; color:var(--muted);
+    font-family:ui-monospace,monospace; white-space:pre-wrap;
+    max-height:180px; overflow-y:auto;
+  }
+  #log .ok{ color:var(--accent2); }
+  #log .wn{ color:var(--warn); }
+  #log .ng{ color:var(--danger); }
+  #log .ai{ color:var(--accent); }
+  .note{ font-size:11px; color:var(--muted); line-height:1.7; }
+
+  footer{
+    width:100%; max-width:520px; margin-top:6px;
+    border-top:1px solid var(--line); padding-top:12px;
+    font-size:11px; color:var(--muted); line-height:1.8;
+  }
+  footer a{ color:var(--accent2); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>歩行テンポ連動 音楽推薦プレイヤー</h1>
+  <p>歩行テンポを計測(またはモード選択)し、そのBPMに合う楽曲をAIと外部データベースの連携で選び、試聴音源を連続再生します。</p>
+</header>
+
+<!-- ===== BPM決定 ===== -->
+<div class="tabs">
+  <button id="tabAuto" class="active">自動計測</button>
+  <button id="tabMode">モード選択</button>
+</div>
+
+<div class="bpm-box">
+  <div class="step-lamp" id="stepLamp"></div>
+  <div class="bpm-label" id="bpmLabel">CADENCE</div>
+  <div class="bpm-value" id="bpmValue">--</div>
+  <div class="bpm-unit">BPM (steps / min)</div>
+  <div class="sub-info" id="autoInfo">
+    <span>準備 <b id="warmupCount">0/2</b></span>
+    <span>計測 <b id="measureCount">0/4</b></span>
+  </div>
+  <div class="progress" id="progressBar"></div>
+</div>
+
+<div class="pane" id="paneAuto">
+  <div class="wave-box">
+    <div class="cap">加速度波形 / ●=検出した一歩</div>
+    <canvas id="waveCanvas"></canvas>
+  </div>
+  <div class="controls">
+    <button id="mainBtn">計測を開始</button>
+  </div>
+</div>
+
+<div class="pane hidden" id="paneMode">
+  <div class="mode-grid" id="modeGrid"></div>
+</div>
+
+<!-- ===== 選曲 ===== -->
+<div class="box">
+  <div class="cap">SELECTION</div>
+  <details>
+    <summary>設定(APIキー・選曲条件)</summary>
+    <label for="apiKey">Gemini APIキー</label>
+    <input type="password" id="apiKey" placeholder="AQ.Ab...">
+    <label for="gsbKey">GetSongBPM APIキー</label>
+    <input type="password" id="gsbKey" placeholder="英数字のキー">
+    <div class="row" style="margin-top:8px;">
+      <div>
+        <label for="numInput">選曲数</label>
+        <input type="number" id="numInput" value="5" min="3" max="8">
+      </div>
+      <div>
+        <label for="yearInput">この年以降(0で無効)</label>
+        <input type="number" id="yearInput" value="2010" min="0" max="2026">
+      </div>
+    </div>
+  </details>
+  <button class="primary" id="selectBtn" style="margin-top:10px;" disabled>BPMを決定すると選曲できます</button>
+</div>
+
+<!-- ===== プレイヤー ===== -->
+<div class="box" id="playerBox" style="display:none;">
+  <div class="cap">PLAYER</div>
+  <div class="now" id="nowPlaying">
+    <img id="npArt" alt="">
+    <div>
+      <div class="t" id="npTitle">-</div>
+      <div class="a" id="npArtist">-</div>
+      <div class="meta" id="npMeta"></div>
+      <div class="reason" id="npReason"></div>
+    </div>
+  </div>
+  <audio id="player"></audio>
+  <div class="player-controls">
+    <button class="main" id="playBtn">連続再生</button>
+    <button id="skipBtn" disabled>次の曲へ</button>
+  </div>
+</div>
+
+<div class="box" id="queueBox" style="display:none;">
+  <div class="cap">QUEUE(選ばれた曲 — タップでその曲へ)</div>
+  <div id="queueList"></div>
+</div>
+
+<div class="box">
+  <div class="cap">WORKFLOW LOG(情報処理の流れ)</div>
+  <div id="log">待機中...</div>
+</div>
+
+<footer>
+  楽曲テンポ(BPM)データ: <a href="https://getsongbpm.com/" target="_blank" rel="noopener">GetSongBPM</a> /
+  楽曲検索・試聴: iTunes Search API / 候補曲生成: Google Gemini API
+</footer>
+
+<script>
+"use strict";
+
+/* =====================================================================
+ * 歩行テンポ連動 音楽推薦プレイヤー(完成形)
+ *
+ * 全体の情報処理の流れ:
+ *   [A] BPM決定
+ *       A-1 自動計測: 加速度センサー(準備2歩+計測4歩、間隔中央値)
+ *       A-2 モード選択: 活動別の典型ケイデンス範囲から一様乱数で決定
+ *   [B] 選曲(順方向パイプライン=方式A)
+ *       B-1 Geminiに候補曲をJSONで要求(洋楽指定・新しめ優先)
+ *       B-2 iTunesで実在・配信確認(JP→USフォールバック、回数制限対策済)
+ *       B-3 邦楽検出フィルタ(かな文字・ジャンルで機械判定)
+ *       B-4 リリース年フィルタ(iTunesのreleaseDateで機械検証)
+ *       B-5 GetSongBPMの実測テンポと照合(±TOL、倍/半テンポ許容)
+ *       B-6 棄却分はGeminiに補充要求(1回)して同じ検証を通す
+ *   [C] 連続再生: 検証通過曲の30秒プレビューを順に自動再生
+ *       (テンポDB未登録の曲は「未確認」と明示してキュー末尾に置く)
+ *
+ * AIを管理する仕組み(課題の加点要素に対応):
+ *   ・出力の自動検証(実在・邦楽・年式・テンポの4段検証)
+ *   ・誤答(捏造・テンポ誤申告)の検出と補充による低減
+ *   ・推薦根拠(reason)の提示
+ *   ・複数モデルの自動ローテーション(429/404時の切替)
+ * ===================================================================== */
+
+/* ---------- 調整用パラメータ ---------- */
+const TOL = 6;                     // テンポ一致の許容差 [BPM]
+const ITUNES_MIN_INTERVAL = 3300;  // iTunes呼び出しの最小間隔 [ms]
+
+/* ---------- 画面要素 ---------- */
+const $ = id => document.getElementById(id);
+const bpmValue = $("bpmValue"), bpmLabel = $("bpmLabel");
+const warmupCount = $("warmupCount"), measureCount = $("measureCount");
+const stepLamp = $("stepLamp"), progressBar = $("progressBar");
+const autoInfo = $("autoInfo");
+const mainBtn = $("mainBtn"), selectBtn = $("selectBtn");
+const logBox = $("log");
+const apiKeyInput = $("apiKey"), gsbKeyInput = $("gsbKey");
+const numInput = $("numInput"), yearInput = $("yearInput");
+const canvas = $("waveCanvas"), ctx = canvas.getContext("2d");
+const playerBox = $("playerBox"), queueBox = $("queueBox");
+const player = $("player");
+const playBtn = $("playBtn"), skipBtn = $("skipBtn");
+const queueList = $("queueList");
+
+apiKeyInput.value = localStorage.getItem("gemini_api_key") || "";
+gsbKeyInput.value = localStorage.getItem("gsb_api_key") || "";
+apiKeyInput.addEventListener("input", ()=>
+  localStorage.setItem("gemini_api_key", apiKeyInput.value.trim()));
+gsbKeyInput.addEventListener("input", ()=>
+  localStorage.setItem("gsb_api_key", gsbKeyInput.value.trim()));
+
+function log(msg, cls){
+  if (logBox.textContent === "待機中...") logBox.textContent = "";
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  const t = new Date();
+  line.textContent = "[" +
+    String(t.getHours()).padStart(2,"0") + ":" +
+    String(t.getMinutes()).padStart(2,"0") + ":" +
+    String(t.getSeconds()).padStart(2,"0") + "] " + msg;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function normalize(s){
+  return (s || "").normalize("NFKC").toLowerCase()
+    .replace(/[\s\u3000!-\/:-@\[-`{-~「」『』()()、。・~〜ー-]/g, "");
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m =>
+    ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+}
+
+/* =====================================================================
+ * [A] BPM決定(段階1と同じロジック)
+ * ===================================================================== */
+let finalBPM = null;
+
+function fixBPM(bpm, sourceText){
+  finalBPM = bpm;
+  bpmValue.textContent = bpm;
+  bpmValue.classList.add("fixed");
+  bpmLabel.textContent = "RESULT";
+  selectBtn.disabled = false;
+  selectBtn.textContent = bpm + " BPM で選曲を開始";
+  log("BPM確定: " + bpm + "(" + sourceText + ")", "ok");
+}
+function resetBPMDisplay(){
+  finalBPM = null;
+  bpmValue.textContent = "--";
+  bpmValue.classList.remove("fixed");
+  bpmLabel.textContent = "CADENCE";
+  selectBtn.disabled = true;
+  selectBtn.textContent = "BPMを決定すると選曲できます";
+}
+
+/* --- モード選択 --- */
+const MODES = [
+  { name:"散歩",       min: 90, max:105 },
+  { name:"普通の歩行", min:105, max:120 },
+  { name:"早歩き",     min:120, max:135 },
+  { name:"ジョギング", min:150, max:170 },
+];
+MODES.forEach((m, i)=>{
+  const btn = document.createElement("button");
+  btn.className = "mode-card";
+  btn.innerHTML =
+    '<div class="m-name">' + m.name + '</div>' +
+    '<div class="m-range">' + m.min + "–" + m.max + ' BPM</div>';
+  btn.addEventListener("click", ()=>{
+    const bpm = m.min + Math.floor(Math.random() * (m.max - m.min + 1));
+    fixBPM(bpm, m.name + "モード(範囲内から抽選)");
+    [...$("modeGrid").children].forEach((c, j)=>
+      c.classList.toggle("selected", j === i));
+  });
+  $("modeGrid").appendChild(btn);
+});
+
+/* --- タブ切り替え --- */
+function switchTab(auto){
+  $("tabAuto").classList.toggle("active", auto);
+  $("tabMode").classList.toggle("active", !auto);
+  $("paneAuto").classList.toggle("hidden", !auto);
+  $("paneMode").classList.toggle("hidden", auto);
+  autoInfo.style.visibility = auto ? "visible" : "hidden";
+}
+$("tabAuto").addEventListener("click", ()=> switchTab(true));
+$("tabMode").addEventListener("click", ()=> switchTab(false));
+
+/* --- 自動計測(センサー) --- */
+const GRAVITY_ALPHA = 0.05, SMOOTH_ALPHA = 0.30, THRESHOLD = 1.2;
+const REFRACTORY_MS = 280, WARMUP_STEPS = 2, MEASURE_STEPS = 4;
+const MAX_GAP_MS = 3000, BPM_MIN = 40, BPM_MAX = 220;
+
+let state = "idle", sensorActive = false;
+let warmupSteps = 0, measureTimes = [];
+let gravityEst = null, smoothVal = 0, lastStepTime = -1, wasAbove = false;
+
+const WAVE_LEN = 300;
+const waveBuf = new Float32Array(WAVE_LEN);
+const peakBuf = new Uint8Array(WAVE_LEN);
+let waveIdx = 0;
+
+function armSession(){
+  state = "warmup";
+  warmupSteps = 0; measureTimes = [];
+  updateCounters();
+  resetBPMDisplay();
+  progressBar.style.width = "0%";
+  mainBtn.disabled = true;
+  mainBtn.textContent = "計測中...";
+  log("歩行計測を開始。最初の2歩は準備、続く4歩で計測します");
+}
+function updateCounters(){
+  warmupCount.textContent  = warmupSteps + "/" + WARMUP_STEPS;
+  measureCount.textContent = measureTimes.length + "/" + MEASURE_STEPS;
+  progressBar.style.width =
+    ((warmupSteps + measureTimes.length) / (WARMUP_STEPS + MEASURE_STEPS) * 100) + "%";
+}
+function registerStep(now){
+  const prevTime = measureTimes.length > 0 ? measureTimes[measureTimes.length-1] : null;
+  if (prevTime !== null && now - prevTime > MAX_GAP_MS){
+    warmupSteps = 0; measureTimes = [];
+    log("歩行が途切れたため、準備からやり直します", "wn");
+  }
+  stepLamp.classList.add("on");
+  setTimeout(()=> stepLamp.classList.remove("on"), 120);
+
+  if (state === "warmup"){
+    warmupSteps++;
+    if (warmupSteps >= WARMUP_STEPS) state = "measuring";
+  }else if (state === "measuring"){
+    measureTimes.push(now);
+    if (measureTimes.length >= MEASURE_STEPS) finishMeasure();
+  }
+  updateCounters();
+}
+function finishMeasure(){
+  state = "done";
+  mainBtn.disabled = false;
+  mainBtn.textContent = "もう一度計測";
+  const intervals = [];
+  for (let i = 1; i < measureTimes.length; i++)
+    intervals.push(measureTimes[i] - measureTimes[i-1]);
+  intervals.sort((a,b)=>a-b);
+  const mid = Math.floor(intervals.length / 2);
+  const median = intervals.length % 2 === 0
+    ? (intervals[mid-1] + intervals[mid]) / 2 : intervals[mid];
+  const bpm = Math.round(60000 / median);
+  if (bpm < BPM_MIN || bpm > BPM_MAX){
+    resetBPMDisplay();
+    log("計測値(" + bpm + " BPM)が歩行として不自然なため無効。再計測してください", "ng");
+    return;
+  }
+  fixBPM(bpm, "自動計測: " + MEASURE_STEPS + "歩から算出");
+}
+function onMotion(e){
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x === null) return;
+  const mag = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
+  if (gravityEst === null) gravityEst = mag;
+  gravityEst = gravityEst + GRAVITY_ALPHA * (mag - gravityEst);
+  smoothVal = smoothVal + SMOOTH_ALPHA * ((mag - gravityEst) - smoothVal);
+  waveBuf[waveIdx] = smoothVal;
+  peakBuf[waveIdx] = 0;
+  const now = performance.now();
+  const above = smoothVal > THRESHOLD;
+  if (above && !wasAbove && (now - lastStepTime) > REFRACTORY_MS){
+    lastStepTime = now;
+    if (state === "warmup" || state === "measuring"){
+      registerStep(now);
+      peakBuf[waveIdx] = 1;
+    }
+  }
+  wasAbove = above;
+  waveIdx = (waveIdx + 1) % WAVE_LEN;
+}
+async function enableSensor(){
+  if (typeof DeviceMotionEvent === "undefined"){
+    log("加速度センサー非対応の端末です。モード選択を使ってください", "ng");
+    return false;
+  }
+  if (typeof DeviceMotionEvent.requestPermission === "function"){
+    try{
+      const res = await DeviceMotionEvent.requestPermission();
+      if (res !== "granted"){ log("センサーの使用が許可されませんでした", "ng"); return false; }
+    }catch(err){
+      log("センサー許可の取得に失敗: " + err.message, "ng");
+      return false;
+    }
+  }
+  window.addEventListener("devicemotion", onMotion);
+  sensorActive = true;
+  return true;
+}
+mainBtn.addEventListener("click", async ()=>{
+  if (!sensorActive){
+    const ok = await enableSensor();
+    if (!ok) return;
+  }
+  armSession();
+});
+
+/* --- 波形描画 --- */
+function resizeCanvas(){
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = canvas.clientWidth  * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+(function drawWave(){
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+  const midY = h * 0.55, scale = h * 0.10;
+  ctx.strokeStyle = "#3A4656"; ctx.setLineDash([4,4]);
+  ctx.beginPath();
+  ctx.moveTo(0, midY - THRESHOLD*scale); ctx.lineTo(w, midY - THRESHOLD*scale);
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = "#FFB454"; ctx.lineWidth = 1.5; ctx.beginPath();
+  for (let i = 0; i < WAVE_LEN; i++){
+    const idx = (waveIdx + i) % WAVE_LEN;
+    const x = (i / (WAVE_LEN-1)) * w, y = midY - waveBuf[idx]*scale;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.fillStyle = "#6FD3C7";
+  for (let i = 0; i < WAVE_LEN; i++){
+    const idx = (waveIdx + i) % WAVE_LEN;
+    if (peakBuf[idx]){
+      const x = (i / (WAVE_LEN-1)) * w, y = midY - waveBuf[idx]*scale;
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  requestAnimationFrame(drawWave);
+})();
+
+/* =====================================================================
+ * [B] 選曲エンジン(順方向・段階3と同じ+リリース年フィルタ)
+ * ===================================================================== */
+
+/* --- モデル自動ローテーション --- */
+let modelQueue = null, currentModel = null;
+const deadModels = new Set();
+
+async function buildModelQueue(key){
+  log("利用可能なモデルを確認中...", "ai");
+  const res = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=" +
+    encodeURIComponent(key));
+  if (!res.ok) throw new Error("モデル一覧の取得に失敗(HTTP " + res.status + ")");
+  const data = await res.json();
+  const names = (data.models || [])
+    .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map(m => m.name.replace(/^models\//, ""));
+  const bad = /preview|exp|image|tts|live|audio/;
+  const flashes = names.filter(n =>
+    n.includes("flash") && !bad.test(n) && !n.includes("lite") &&
+    n !== "gemini-flash-latest").sort().reverse();
+  const lites = names.filter(n =>
+    n.includes("flash") && !bad.test(n) && n.includes("lite")).sort().reverse();
+  const queue = [];
+  if (names.includes("gemini-flash-latest")) queue.push("gemini-flash-latest");
+  queue.push(...flashes, ...lites);
+  if (queue.length === 0) throw new Error("このキーで使えるFlash系モデルが見つかりません");
+  return queue;
+}
+async function pickModel(key){
+  if (modelQueue === null) modelQueue = await buildModelQueue(key);
+  if (currentModel && !deadModels.has(currentModel)) return currentModel;
+  currentModel = modelQueue.find(m => !deadModels.has(m)) || null;
+  if (!currentModel)
+    throw new Error("全モデルが制限に達しています。時間を置いて再実行してください");
+  log("使用モデル: " + currentModel, "ok");
+  return currentModel;
+}
+async function geminiJSON(prompt){
+  const key = apiKeyInput.value.trim();
+  for (let attempt = 0; attempt < 6; attempt++){
+    const model = await pickModel(key);
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+                model + ":generateContent?key=" + encodeURIComponent(key);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+    if (res.ok){
+      const data = await res.json();
+      const text = (data.candidates?.[0]?.content?.parts || [])
+        .map(p => p.text || "").join("");
+      return JSON.parse(text.replace(/```json|```/g, "").trim());
+    }
+    if (res.status === 429 || res.status === 404){
+      log("モデル " + model + " が使用不能(HTTP " + res.status +
+          ")。別モデルへ切り替えます", "wn");
+      deadModels.add(model);
+      currentModel = null;
+      continue;
+    }
+    if (res.status === 400 || res.status === 403)
+      throw new Error("Gemini APIキーが無効のようです(HTTP " + res.status + ")");
+    throw new Error("Gemini APIエラー: HTTP " + res.status);
+  }
+  throw new Error("利用可能なモデルを使い切りました。時間を置いて再実行してください");
+}
+
+/* --- Geminiへの候補要求 --- */
+async function askGemini(targetBPM, count, excludeList){
+  const yearMin = parseInt(yearInput.value, 10) || 0;
+  const prompt =
+    "あなたは音楽の選曲アシスタントです。\n" +
+    "歩行のテンポに合わせて聴く楽曲を " + count + " 曲提案してください。\n" +
+    "条件:\n" +
+    "- テンポが " + targetBPM + " BPM 前後の楽曲(誤差は後で機械的に検証する)\n" +
+    "- 実在する楽曲のみ。架空の曲名・アーティスト名は絶対に出さない\n" +
+    "- 【最重要】全曲、海外(非日本)アーティストの洋楽にすること\n" +
+    (yearMin > 0 ? "- " + yearMin + "年以降にリリースされた曲を中心にする\n" : "") +
+    "- 同じアーティストは1曲まで\n" +
+    "- 定番曲だけでなく、リスナーの新規開拓につながる曲も混ぜる\n" +
+    (excludeList.length > 0
+      ? "- 次の曲は既に提案済みなので除外する: " + excludeList.join(" / ") + "\n" : "") +
+    "出力は次の形式のJSON配列のみ:\n" +
+    '[{"artist":"アーティスト名","title":"曲名","bpm":整数(あなたの推定),"reason":"選んだ理由(日本語1文)"}]';
+  return await geminiJSON(prompt);
+}
+
+/* --- iTunes(回数制限対策つき、JP→US) --- */
+let lastItunesCall = 0;
+async function searchItunes(term, country){
+  const wait = lastItunesCall + ITUNES_MIN_INTERVAL - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastItunesCall = Date.now();
+  const base = "https://itunes.apple.com/search?media=music&country=" + country +
+               "&limit=25&term=" + encodeURIComponent(term);
+  try{
+    const r = await fetch(base);
+    if (!r.ok) throw new Error("iTunes応答 HTTP " + r.status);
+    return await r.json();
+  }catch(e){
+    if (e instanceof TypeError) return await jsonp(base);
+    throw e;
+  }
+}
+function jsonp(url){
+  return new Promise((resolve, reject)=>{
+    const cbName = "itunes_cb_" + Math.floor(Math.random()*1e9);
+    window[cbName] = (data)=>{ resolve(data); delete window[cbName]; script.remove(); };
+    const script = document.createElement("script");
+    script.src = url + "&callback=" + cbName;
+    script.onerror = ()=>{ reject(new Error("iTunes検索に失敗")); script.remove(); };
+    document.body.appendChild(script);
+  });
+}
+function findItunesMatch(candidate, results){
+  const nTitle = normalize(candidate.title), nArtist = normalize(candidate.artist);
+  for (const r of results){
+    const rTitle = normalize(r.trackName), rArtist = normalize(r.artistName);
+    if ((rTitle.includes(nTitle) || nTitle.includes(rTitle)) &&
+        (rArtist.includes(nArtist) || nArtist.includes(rArtist)) &&
+        r.previewUrl) return r;
+  }
+  return null;
+}
+
+/* --- 邦楽検出 --- */
+function looksJapanese(candidate, itunesHit){
+  const kana = /[\u3040-\u30FF]/;
+  if (kana.test(candidate.artist + candidate.title +
+                itunesHit.artistName + itunesHit.trackName)) return true;
+  return /j-pop|jpop|anime|アニメ|演歌|歌謡/i.test(itunesHit.primaryGenreName || "");
+}
+
+/* --- GetSongBPM --- */
+let gsbViaProxy = false;
+async function gsbFetch(url){
+  if (!gsbViaProxy){
+    try{
+      const r = await fetch(url);
+      if (r.ok) return await r.json();
+      throw new Error("HTTP " + r.status);
+    }catch(e){
+      if (!(e instanceof TypeError)) throw e;
+      log("GetSongBPMへ直接接続できず。プロキシ経由に切り替え", "wn");
+      gsbViaProxy = true;
+    }
+  }
+  const r = await fetch("https://api.allorigins.win/raw?url=" + encodeURIComponent(url));
+  if (!r.ok) throw new Error("プロキシ経由でも失敗(HTTP " + r.status + ")");
+  return await r.json();
+}
+async function gsbLookupTempo(candidate){
+  const key = gsbKeyInput.value.trim();
+  const lookup = "song:" + candidate.title + " artist:" + candidate.artist;
+  const url = "https://api.getsong.co/search/?api_key=" + encodeURIComponent(key) +
+              "&type=both&lookup=" + encodeURIComponent(lookup);
+  const data = await gsbFetch(url);
+  const list = Array.isArray(data.search) ? data.search : [];
+  const nArtist = normalize(candidate.artist);
+  for (const s of list){
+    const sArtist = normalize(s.artist && s.artist.name);
+    if (!(sArtist.includes(nArtist) || nArtist.includes(sArtist))) continue;
+    if (s.tempo) return parseFloat(s.tempo);
+    if (s.id){
+      const d = await gsbFetch(
+        "https://api.getsong.co/song/?api_key=" +
+        encodeURIComponent(key) + "&id=" + encodeURIComponent(s.id));
+      if (d.song && d.song.tempo) return parseFloat(d.song.tempo);
+    }
+  }
+  return null;
+}
+function tempoVerdict(tempo, target){
+  if (Math.abs(tempo - target)   <= TOL) return { ok:true, mode:"一致" };
+  if (Math.abs(tempo/2 - target) <= TOL) return { ok:true, mode:"倍テンポ一致" };
+  if (Math.abs(tempo*2 - target) <= TOL) return { ok:true, mode:"半テンポ一致" };
+  return { ok:false };
+}
+
+/* --- 検証パイプライン ---
+ * 実在 → 邦楽除外 → 年式 → テンポ照合 の4段検証 */
+async function verifyCandidates(candidates, targetBPM, yearMin){
+  const passed = [], unverified = [], rejected = [];
+  for (const c of candidates){
+    log("検証: " + c.artist + " - " + c.title);
+    /* B-2 実在・配信確認 */
+    let hit = null;
+    try{
+      for (const country of ["JP", "US"]){
+        const data = await searchItunes(c.artist + " " + c.title, country);
+        hit = findItunesMatch(c, data.results || []);
+        if (hit){
+          if (country !== "JP") log("  → USストアで発見", "wn");
+          break;
+        }
+      }
+    }catch(err){ log("  iTunes検索エラー: " + err.message, "ng"); }
+    if (!hit){
+      log("  → iTunes(JP/US)に該当なし。棄却", "ng");
+      rejected.push(c);
+      continue;
+    }
+    /* B-3 邦楽除外 */
+    if (looksJapanese(c, hit)){
+      log("  → 邦楽と判定。洋楽指定違反として棄却", "ng");
+      rejected.push(c);
+      continue;
+    }
+    /* B-4 リリース年 */
+    const year = hit.releaseDate ? new Date(hit.releaseDate).getFullYear() : null;
+    if (yearMin > 0 && year !== null && year < yearMin){
+      log("  → リリースが古いため棄却(" + year + "年)", "ng");
+      rejected.push(c);
+      continue;
+    }
+    /* B-5 テンポ照合 */
+    let tempo = null;
+    try{ tempo = await gsbLookupTempo(c); }
+    catch(err){ log("  GetSongBPM照会エラー: " + err.message, "wn"); }
+    if (tempo === null){
+      log("  → テンポDB未登録。未確認として保留", "wn");
+      unverified.push({ cand:c, itunes:hit, year });
+    }else{
+      const v = tempoVerdict(tempo, targetBPM);
+      if (v.ok){
+        log("  → テンポ照合OK: DB実測 " + tempo + " BPM(" + v.mode +
+            ") / AI申告 " + c.bpm, "ok");
+        passed.push({ cand:c, itunes:hit, tempo, mode:v.mode, year });
+      }else{
+        log("  → テンポ不一致で棄却: DB実測 " + tempo +
+            " / AI申告 " + c.bpm, "ng");
+        rejected.push(c);
+      }
+    }
+    await sleep(200);
+  }
+  return { passed, unverified, rejected };
+}
+
+/* =====================================================================
+ * [C] プレイヤー(連続再生)
+ * ===================================================================== */
+let queue = [], qi = -1, started = false;
+
+function renderQueue(){
+  queueList.innerHTML = "";
+  queue.forEach((v, i)=>{
+    const div = document.createElement("div");
+    div.className = "qitem" + (i === qi ? " playing" : "");
+    const art = (v.itunes.artworkUrl100 || "").replace("100x100","128x128");
+    div.innerHTML =
+      '<img src="' + art + '" alt="">' +
+      '<div><div class="t">' + escapeHtml(v.itunes.trackName) + '</div>' +
+      '<div class="a">' + escapeHtml(v.itunes.artistName) + '</div></div>' +
+      (v.tempo
+        ? '<div class="m">' + v.tempo + ' BPM<br>' + escapeHtml(v.mode) + '</div>'
+        : '<div class="m unv">テンポ未確認</div>');
+    div.addEventListener("click", ()=>{ qi = i; playCurrent(); });
+    queueList.appendChild(div);
+  });
+}
+function playCurrent(){
+  const v = queue[qi];
+  if (!v) return;
+  $("npArt").src = (v.itunes.artworkUrl100 || "").replace("100x100","128x128");
+  $("npTitle").textContent  = v.itunes.trackName;
+  $("npArtist").textContent = v.itunes.artistName;
+  $("npMeta").textContent = (v.tempo
+    ? "DB実測 " + v.tempo + " BPM(" + v.mode + ")"
+    : "テンポ未確認(DB未登録)") + (v.year ? " / " + v.year + "年" : "");
+  $("npReason").textContent = v.cand.reason || "";
+  player.src = v.itunes.previewUrl;
+  player.play().catch(()=> log("再生できませんでした。「連続再生」を押してください", "wn"));
+  started = true;
+  playBtn.textContent = "一時停止";
+  skipBtn.disabled = false;
+  renderQueue();
+}
+function playNext(){
+  if (qi + 1 < queue.length){ qi++; playCurrent(); }
+  else{
+    log("キューの再生が終了しました", "ok");
+    playBtn.textContent = "最初から再生";
+    started = false; qi = -1;
+    renderQueue();
+  }
+}
+player.addEventListener("ended", playNext);
+playBtn.addEventListener("click", ()=>{
+  if (!started){ qi = -1; playNext(); return; }
+  if (player.paused){ player.play(); playBtn.textContent = "一時停止"; }
+  else{ player.pause(); playBtn.textContent = "再生"; }
+});
+skipBtn.addEventListener("click", playNext);
+
+/* =====================================================================
+ * メイン: 選曲ボタン → 検証パイプライン → キュー構築
+ * ===================================================================== */
+selectBtn.addEventListener("click", async ()=>{
+  if (finalBPM === null) return;
+  if (!apiKeyInput.value.trim()){ log("Gemini APIキーを設定してください(設定欄を開く)", "ng"); return; }
+  if (!gsbKeyInput.value.trim()){ log("GetSongBPM APIキーを設定してください", "ng"); return; }
+
+  const bpm = finalBPM;
+  const num = parseInt(numInput.value, 10);
+  const yearMin = parseInt(yearInput.value, 10) || 0;
+
+  selectBtn.disabled = true;
+  selectBtn.textContent = "選曲中...(1〜2分かかります)";
+  playerBox.style.display = "none";
+  queueBox.style.display = "none";
+
+  try{
+    log("Geminiに候補曲を要求(目標 " + bpm + " BPM, " + num + "曲)...", "ai");
+    const candidates = await askGemini(bpm, num, []);
+    log("候補 " + candidates.length + " 曲を受信", "ai");
+
+    let { passed, unverified, rejected } = await verifyCandidates(candidates, bpm, yearMin);
+
+    if (rejected.length > 0){
+      const excludeNames = candidates.map(c => c.artist + " - " + c.title);
+      log("棄却 " + rejected.length + " 曲の補充をGeminiに要求...", "ai");
+      try{
+        const extra = await askGemini(bpm, rejected.length, excludeNames);
+        const r2 = await verifyCandidates(extra, bpm, yearMin);
+        passed = passed.concat(r2.passed);
+        unverified = unverified.concat(r2.unverified);
+      }catch(err){ log("補充要求に失敗: " + err.message, "ng"); }
+    }
+
+    /* キュー: テンポ検証済みを先頭、未確認は末尾(明示ラベル付き) */
+    queue = [...passed, ...unverified];
+    qi = -1; started = false;
+    log("完了: 検証済 " + passed.length + " 曲 + 未確認 " + unverified.length +
+        " 曲をキューに追加", "ok");
+    if (queue.length === 0){
+      log("再生できる曲がありませんでした。条件を緩めて再実行してください", "ng");
+    }else{
+      playerBox.style.display = "";
+      queueBox.style.display = "";
+      playBtn.textContent = "連続再生";
+      skipBtn.disabled = true;
+      renderQueue();
+    }
+  }catch(err){
+    log("エラー: " + err.message, "ng");
+  }finally{
+    selectBtn.disabled = false;
+    selectBtn.textContent = bpm + " BPM で選曲を開始";
+  }
+});
+</script>
+</body>
+</html>
