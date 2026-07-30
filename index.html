@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>歩行テンポ連動 音楽推薦システム</title>
+<style>
+  :root{
+    --bg:      #12161C;
+    --panel:   #1B222C;
+    --line:    #2A3442;
+    --text:    #E9E4D8;
+    --muted:   #8B95A3;
+    --accent:  #FFB454;
+    --accent2: #6FD3C7;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    min-height:100vh; padding:32px 16px 24px;
+  }
+  main{ width:100%; max-width:560px; flex:1; }
+  h1{ font-size:20px; font-weight:700; letter-spacing:.06em; line-height:1.5; }
+  .sub{ font-size:13px; color:var(--muted); margin-top:6px; line-height:1.7; }
+
+  .list{ margin-top:24px; display:flex; flex-direction:column; gap:10px; }
+  a.card{
+    display:block; text-decoration:none;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:16px;
+  }
+  a.card:hover{ border-color:var(--accent); }
+  a.card .t{ font-size:15px; font-weight:600; color:var(--text); }
+  a.card .d{ font-size:12px; color:var(--muted); margin-top:4px; line-height:1.6; }
+  a.card .tag{
+    display:inline-block; font-size:10px; letter-spacing:.1em;
+    color:var(--accent); border:1px solid var(--accent);
+    border-radius:4px; padding:1px 6px; margin-bottom:6px;
+  }
+
+  footer{
+    width:100%; max-width:560px; margin-top:40px;
+    border-top:1px solid var(--line); padding-top:14px;
+    font-size:12px; color:var(--muted); line-height:1.8;
+  }
+  footer a{ color:var(--accent2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>歩行テンポ連動 音楽推薦システム</h1>
+  <p class="sub">スマートフォンの加速度センサーで歩行テンポ(BPM)を計測し、生成AIと楽曲データベースを組み合わせてテンポの合う楽曲を推薦・再生するシステムです。知能情報システム開発課題(レポート3)の制作物として、開発段階ごとにページを分けて公開しています。</p>
+
+  <div class="list">
+    <a class="card" href="step1_walk_bpm_v4.html">
+      <span class="tag">STEP 1</span>
+      <div class="t">歩行BPM決定</div>
+      <div class="d">加速度センサーによる歩行テンポの自動計測(準備2歩+計測4歩)と、活動モード選択によるBPM決定。</div>
+    </a>
+    <a class="card" href="step2_song_select_v3.html">
+      <span class="tag">STEP 2</span>
+      <div class="t">選曲エンジン(LLM推薦+実在検証)</div>
+      <div class="d">Gemini APIによる候補曲の提案と、iTunes Search APIによる実在検証・試聴。実在しない候補(ハルシネーション)は自動棄却。</div>
+    </a>
+  </div>
+</main>
+
+<footer>
+  楽曲テンポ(BPM)データ: <a href="https://getsongbpm.com/" target="_blank" rel="noopener">GetSongBPM</a><br>
+  楽曲検索・試聴音源: iTunes Search API / 候補曲生成: Google Gemini API
+</footer>
+</body>
+</html>
