@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>選曲エンジン - 段階2</title>
+<style>
+  /* ===== 配色・書体(段階1と共通) ===== */
+  :root{
+    --bg:      #12161C;
+    --panel:   #1B222C;
+    --line:    #2A3442;
+    --text:    #E9E4D8;
+    --muted:   #8B95A3;
+    --accent:  #FFB454;  /* 琥珀: 主要操作 */
+    --accent2: #6FD3C7;  /* 青緑: 検証OK */
+    --danger:  #E06C75;  /* 赤: 検証NG(棄却) */
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding:20px 16px 60px;
+  }
+  header{ width:100%; max-width:560px; margin-bottom:14px; }
+  header h1{ font-size:16px; font-weight:600; letter-spacing:.08em; }
+  header p{ font-size:12px; color:var(--muted); margin-top:4px; line-height:1.6; }
+
+  .box{
+    width:100%; max-width:560px;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:14px; margin-bottom:14px;
+  }
+  .box .cap{ font-size:11px; color:var(--muted); letter-spacing:.15em; margin-bottom:8px; }
+
+  label{ font-size:12px; color:var(--muted); display:block; margin-bottom:4px; }
+  input[type="password"], input[type="number"]{
+    width:100%; padding:10px 12px; font-size:14px;
+    background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:8px;
+    font-family:ui-monospace,monospace;
+  }
+  input:focus-visible{ outline:2px solid var(--accent2); outline-offset:1px; }
+  .row{ display:flex; gap:10px; }
+  .row > div{ flex:1; }
+
+  button.primary{
+    width:100%; padding:14px 0; margin-top:10px;
+    font-size:15px; font-weight:600; font-family:inherit;
+    border:none; border-radius:10px; cursor:pointer;
+    background:var(--accent); color:#20180C;
+  }
+  button.primary:disabled{ background:var(--line); color:var(--muted); }
+  button:focus-visible{ outline:2px solid var(--accent2); outline-offset:2px; }
+
+  /* ===== 処理ログ ===== */
+  #log{
+    font-size:11px; line-height:1.8; color:var(--muted);
+    font-family:ui-monospace,monospace; white-space:pre-wrap;
+    max-height:220px; overflow-y:auto;
+  }
+  #log .ok{ color:var(--accent2); }
+  #log .ng{ color:var(--danger); }
+  #log .ai{ color:var(--accent); }
+
+  /* ===== 曲カード ===== */
+  .song{
+    display:flex; gap:12px; padding:12px;
+    border:1px solid var(--line); border-radius:10px; margin-bottom:10px;
+    background:var(--bg);
+  }
+  .song img{
+    width:64px; height:64px; border-radius:8px; flex-shrink:0;
+    background:var(--line);
+  }
+  .song .info{ flex:1; min-width:0; }
+  .song .t{ font-size:14px; font-weight:600; }
+  .song .a{ font-size:12px; color:var(--muted); margin-top:2px; }
+  .song .meta{
+    font-size:11px; color:var(--accent2); margin-top:4px;
+    font-family:ui-monospace,monospace;
+  }
+  .song .reason{ font-size:12px; color:var(--muted); margin-top:6px; line-height:1.5; }
+  .song audio{ width:100%; height:32px; margin-top:8px; }
+
+  /* 棄却された候補の表示 */
+  .rejected{
+    font-size:12px; color:var(--danger);
+    padding:8px 12px; border:1px dashed var(--danger);
+    border-radius:8px; margin-bottom:8px; line-height:1.6;
+  }
+  .note{ font-size:11px; color:var(--muted); line-height:1.7; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>選曲エンジン(段階2 v2: LLM推薦+実在検証)</h1>
+  <p>目標BPMを入力すると、①Gemini APIが候補曲を提案 → ②iTunes Search APIで実在を検証 → ③実在しない曲(AIの捏造)は棄却して補充要求 → ④検証を通過した曲だけを試聴プレイヤー付きで表示します。</p>
+</header>
+
+<div class="box">
+  <div class="cap">SETTINGS</div>
+  <label for="apiKey">Gemini APIキー(この端末のブラウザにのみ保存されます)</label>
+  <input type="password" id="apiKey" placeholder="AQ.Ab...(旧形式のAIza...でも可)">
+  <div class="row" style="margin-top:10px;">
+    <div>
+      <label for="bpmInput">目標BPM(段階1で計測した値を想定)</label>
+      <input type="number" id="bpmInput" value="115" min="40" max="220">
+    </div>
+    <div>
+      <label for="numInput">候補曲数</label>
+      <input type="number" id="numInput" value="5" min="3" max="8">
+    </div>
+  </div>
+  <button class="primary" id="goBtn">選曲開始</button>
+  <button class="primary" id="testBtn" style="background:var(--panel);color:var(--text);border:1px solid var(--line);">接続テスト(トラブル診断用)</button>
+</div>
+
+<div class="box">
+  <div class="cap">WORKFLOW LOG(情報処理の流れ)</div>
+  <div id="log">待機中...</div>
+</div>
+
+<div class="box">
+  <div class="cap">RESULT(検証を通過した曲)</div>
+  <div id="results"><div class="note">まだ結果はありません。</div></div>
+</div>
+
+<div class="box">
+  <div class="cap">REJECTED(検証で棄却された候補)</div>
+  <div id="rejects"><div class="note">まだ結果はありません。</div></div>
+</div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+ * 選曲エンジン 段階2
+ *
+ * 情報処理の流れ(ワークフロー):
+ *   [1] Gemini に「目標BPM±5の実在曲をJSONで」と要求
+ *   [2] 返ってきた各候補を iTunes Search API で検索
+ *   [3] アーティスト名・曲名が一致する結果が見つかれば「実在」と判定
+ *       見つからなければ「捏造の疑い」として棄却
+ *   [4] 棄却があれば、棄却分の数だけ Gemini に補充を要求(1回だけ)
+ *       ※提案済みの曲は除外リストとして渡し、重複を防ぐ
+ *   [5] 検証を通過した曲のみ、試聴プレイヤー付きで表示
+ *
+ * ポイント: LLMは実在しない曲名を出力することがある(ハルシネーション)。
+ * 外部の楽曲データベースとの突き合わせで、それを機械的に検出・除去する。
+ * ===================================================================== */
+
+/* ---------- 画面要素 ---------- */
+const apiKeyInput = document.getElementById("apiKey");
+const bpmInput    = document.getElementById("bpmInput");
+const numInput    = document.getElementById("numInput");
+const goBtn       = document.getElementById("goBtn");
+const logBox      = document.getElementById("log");
+const resultsBox  = document.getElementById("results");
+const rejectsBox  = document.getElementById("rejects");
+
+/* APIキーは入力のたびにlocalStorageへ保存し、次回開いたとき復元する
+ * (キーが他人のサーバーに送られるのはGoogleのAPI呼び出しのみ) */
+apiKeyInput.value = localStorage.getItem("gemini_api_key") || "";
+apiKeyInput.addEventListener("input", ()=>{
+  localStorage.setItem("gemini_api_key", apiKeyInput.value.trim());
+});
+
+/* ---------- ログ出力(処理の流れを可視化する) ---------- */
+function log(msg, cls){
+  if (logBox.textContent === "待機中...") logBox.textContent = "";
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  const t = new Date();
+  const hh = String(t.getHours()).padStart(2,"0");
+  const mm = String(t.getMinutes()).padStart(2,"0");
+  const ss = String(t.getSeconds()).padStart(2,"0");
+  line.textContent = "[" + hh + ":" + mm + ":" + ss + "] " + msg;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+/* =====================================================================
+ * [1] Gemini API 呼び出し
+ * responseMimeType を application/json にすると、モデルが
+ * JSON以外の文章を混ぜずに返すようになる(構造化出力)
+ * ===================================================================== */
+const GEMINI_MODEL = "gemini-2.5-flash";
+
+async function askGemini(targetBPM, count, excludeList){
+  const key = apiKeyInput.value.trim();
+  // キーはヘッダーではなくURLパラメータで渡す(Google公式の基本形。
+  // カスタムヘッダーを使わないことでCORSの事前チェックの失敗要因を減らす)
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+              GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(key);
+
+  // 選曲を指示するプロンプト
+  const prompt =
+    "あなたは音楽の選曲アシスタントです。\n" +
+    "歩行のテンポに合わせて聴く楽曲を " + count + " 曲提案してください。\n" +
+    "条件:\n" +
+    "- テンポが " + targetBPM + " BPM の前後5以内(1歩=1拍で歩調に合う)\n" +
+    "- 実在する楽曲のみ。架空の曲名・アーティスト名は絶対に出さない\n" +
+    "- 日本の音楽配信サービスで配信されている曲\n" +
+    "- 同じアーティストは1曲まで\n" +
+    "- 定番曲だけでなく、リスナーの新規開拓につながる曲も混ぜる\n" +
+    (excludeList.length > 0
+      ? "- 次の曲は既に提案済みなので除外する: " + excludeList.join(" / ") + "\n"
+      : "") +
+    "出力は次の形式のJSON配列のみ:\n" +
+    '[{"artist":"アーティスト名","title":"曲名","bpm":整数,"reason":"選んだ理由(日本語1文)"}]';
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json" }
+    })
+  });
+
+  if (!res.ok){
+    const errText = await res.text();
+    if (res.status === 400 || res.status === 403)
+      throw new Error("APIキーが無効のようです(HTTP " + res.status + ")");
+    if (res.status === 429)
+      throw new Error("無料枠のレート制限に達しました。少し待って再実行してください");
+    throw new Error("Gemini APIエラー: HTTP " + res.status + " " + errText.slice(0,120));
+  }
+
+  const data = await res.json();
+  // 返答からテキスト部分を取り出す
+  const text = (data.candidates?.[0]?.content?.parts || [])
+    .map(p => p.text || "").join("");
+  // 念のため ```json フェンスが付いていた場合は除去してからパース
+  const clean = text.replace(/```json|```/g, "").trim();
+  return JSON.parse(clean);
+}
+
+/* =====================================================================
+ * [2][3] iTunes Search API による実在検証
+ * ===================================================================== */
+
+/* 表記ゆれを吸収するための正規化:
+ * 全角/半角の統一(NFKC) → 小文字化 → 記号・空白の除去 */
+function normalize(s){
+  return (s || "").normalize("NFKC").toLowerCase()
+    .replace(/[\s\u3000!-\/:-@\[-`{-~「」『』()()、。・~〜ー-]/g, "");
+}
+
+/* iTunes検索。まず通常のfetchを試し、CORSで失敗したらJSONPで再試行する */
+function searchItunes(term){
+  const base = "https://itunes.apple.com/search?media=music&country=JP&limit=5&term=" +
+               encodeURIComponent(term);
+  return fetch(base)
+    .then(r => r.json())
+    .catch(() => jsonp(base));  // fetchがCORSで弾かれた場合の保険
+}
+
+/* JSONP: <script>タグ経由でAPIを呼ぶ古典的な回避策 */
+function jsonp(url){
+  return new Promise((resolve, reject)=>{
+    const cbName = "itunes_cb_" + Math.floor(Math.random()*1e9);
+    window[cbName] = (data)=>{
+      resolve(data);
+      delete window[cbName];
+      script.remove();
+    };
+    const script = document.createElement("script");
+    script.src = url + "&callback=" + cbName;
+    script.onerror = ()=>{ reject(new Error("iTunes検索に失敗")); script.remove(); };
+    document.body.appendChild(script);
+  });
+}
+
+/* 候補曲が検索結果の中に「実在」するか判定する。
+ * 曲名とアーティスト名の両方が(正規化後の)部分一致すれば一致とみなす */
+function findMatch(candidate, results){
+  const nTitle  = normalize(candidate.title);
+  const nArtist = normalize(candidate.artist);
+  for (const r of results){
+    const rTitle  = normalize(r.trackName);
+    const rArtist = normalize(r.artistName);
+    const titleOK  = rTitle.includes(nTitle)  || nTitle.includes(rTitle);
+    const artistOK = rArtist.includes(nArtist) || nArtist.includes(rArtist);
+    if (titleOK && artistOK && r.previewUrl) return r;
+  }
+  return null;
+}
+
+/* 待機(iTunes APIの呼びすぎ防止。目安: 20回/分程度に抑える) */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* 候補リストを順番に検証する */
+async function verifyCandidates(candidates){
+  const verified = [], rejected = [];
+  for (const c of candidates){
+    log("検証: " + c.artist + " - " + c.title + " をiTunesで検索...");
+    try{
+      const data = await searchItunes(c.artist + " " + c.title);
+      const hit = findMatch(c, data.results || []);
+      if (hit){
+        log("  → 実在確認OK(" + hit.artistName + " - " + hit.trackName + ")", "ok");
+        verified.push({ cand: c, itunes: hit });
+      }else{
+        log("  → 一致なし。捏造の疑いで棄却", "ng");
+        rejected.push(c);
+      }
+    }catch(err){
+      log("  → 検索エラー(" + err.message + ")。棄却扱い", "ng");
+      rejected.push(c);
+    }
+    await sleep(400);  // 連続呼び出しの間隔を空ける
+  }
+  return { verified, rejected };
+}
+
+/* =====================================================================
+ * [5] 結果の表示
+ * ===================================================================== */
+function renderResults(verifiedList){
+  resultsBox.innerHTML = "";
+  if (verifiedList.length === 0){
+    resultsBox.innerHTML = '<div class="note">検証を通過した曲がありませんでした。</div>';
+    return;
+  }
+  for (const v of verifiedList){
+    const div = document.createElement("div");
+    div.className = "song";
+    const art = (v.itunes.artworkUrl100 || "").replace("100x100","128x128");
+    div.innerHTML =
+      '<img src="' + art + '" alt="">' +
+      '<div class="info">' +
+        '<div class="t">' + escapeHtml(v.itunes.trackName) + '</div>' +
+        '<div class="a">' + escapeHtml(v.itunes.artistName) + '</div>' +
+        '<div class="meta">AI申告テンポ: ' + v.cand.bpm + ' BPM / 実在確認済み</div>' +
+        '<div class="reason">' + escapeHtml(v.cand.reason || "") + '</div>' +
+        '<audio controls preload="none" src="' + v.itunes.previewUrl + '"></audio>' +
+      '</div>';
+    resultsBox.appendChild(div);
+  }
+}
+
+function renderRejects(rejectedList){
+  rejectsBox.innerHTML = "";
+  if (rejectedList.length === 0){
+    rejectsBox.innerHTML = '<div class="note">棄却された候補はありませんでした。</div>';
+    return;
+  }
+  for (const c of rejectedList){
+    const div = document.createElement("div");
+    div.className = "rejected";
+    div.textContent = c.artist + " - " + c.title +
+      "(iTunesに該当なし: 実在しないか表記が不正確)";
+    rejectsBox.appendChild(div);
+  }
+}
+
+/* XSS対策: AI出力を画面に埋め込む前にHTML特殊文字を無害化する */
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m =>
+    ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+}
+
+/* =====================================================================
+ * 接続テスト: Geminiに最小のリクエストを送り、失敗原因の切り分け用に
+ * 詳細な情報をログへ出す(トラブル診断専用)
+ * ===================================================================== */
+document.getElementById("testBtn").addEventListener("click", async ()=>{
+  logBox.textContent = "";
+  log("--- 接続テスト開始 ---");
+  log("ページの開き方: " + location.protocol + "//" + (location.host || "(ローカルファイル)"));
+  if (location.protocol === "file:"){
+    log("警告: ローカルファイルとして開いています。GitHub PagesのURLから開いてください", "ng");
+  }
+  const key = apiKeyInput.value.trim();
+  if (!key){ log("APIキーが未入力です", "ng"); return; }
+  log("キー形式: 先頭 " + key.slice(0,6) + "... / 長さ " + key.length + "文字");
+
+  // まずインターネット疎通の確認(iTunes APIへの軽い呼び出し)
+  try{
+    await searchItunes("test");
+    log("インターネット疎通: OK(iTunes応答あり)", "ok");
+  }catch(e){
+    log("インターネット疎通: NG(" + e.message + ")", "ng");
+  }
+
+  // Geminiへ最小リクエスト
+  log("Geminiへテスト送信中(" + GEMINI_MODEL + ")...", "ai");
+  try{
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+                GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(key);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: "「OK」とだけ返答して" }] }] })
+    });
+    log("HTTPステータス: " + res.status);
+    const body = await res.text();
+    if (res.ok){
+      log("Gemini接続: 成功!返答サンプル: " + body.slice(0,80).replace(/\n/g,""), "ok");
+      log("--- テスト完了: このまま「選曲開始」が使えます ---", "ok");
+    }else{
+      log("Gemini応答(エラー本文): " + body.slice(0,300), "ng");
+      if (res.status === 400) log("→ キーの形式か貼り間違いの可能性", "ng");
+      if (res.status === 403) log("→ キーが無効/制限設定の可能性。AI Studioでキーの状態を確認", "ng");
+      if (res.status === 429) log("→ 無料枠のレート制限。1分ほど待って再試行", "ng");
+    }
+  }catch(err){
+    log("fetch自体が失敗: " + err.message, "ng");
+    log("考えられる原因:", "ng");
+    log(" 1) ローカルファイル(file://)で開いている → GitHub PagesのURLで開く", "ng");
+    log(" 2) iOSのコンテンツブロッカーや省データモードが通信を遮断", "ng");
+    log(" 3) 学内Wi-Fi等がgoogleapis.comへの通信を制限", "ng");
+    log(" → 別の回線(モバイル通信)や別ブラウザでも試してください", "ng");
+  }
+});
+
+/* =====================================================================
+ * メイン処理: ワークフロー全体の制御
+ * ===================================================================== */
+goBtn.addEventListener("click", async ()=>{
+  const key = apiKeyInput.value.trim();
+  if (!key){ log("APIキーを入力してください", "ng"); return; }
+  const bpm = parseInt(bpmInput.value, 10);
+  const num = parseInt(numInput.value, 10);
+
+  goBtn.disabled = true;
+  goBtn.textContent = "処理中...";
+  logBox.textContent = "待機中...";
+  resultsBox.innerHTML = '<div class="note">処理中...</div>';
+  rejectsBox.innerHTML = '<div class="note">処理中...</div>';
+
+  try{
+    /* --- [1] 1回目の候補要求 --- */
+    log("Geminiに候補曲を要求(目標 " + bpm + "±5 BPM, " + num + "曲)...", "ai");
+    let candidates = await askGemini(bpm, num, []);
+    log("候補 " + candidates.length + " 曲を受信", "ai");
+
+    /* --- [2][3] 実在検証 --- */
+    let { verified, rejected } = await verifyCandidates(candidates);
+    const allRejected = [...rejected];
+
+    /* --- [4] 棄却があれば1回だけ補充を要求 --- */
+    if (rejected.length > 0){
+      const excludeNames = candidates.map(c => c.artist + " - " + c.title);
+      log("棄却 " + rejected.length + " 曲の補充をGeminiに要求...", "ai");
+      try{
+        const extra = await askGemini(bpm, rejected.length, excludeNames);
+        log("補充候補 " + extra.length + " 曲を受信", "ai");
+        const r2 = await verifyCandidates(extra);
+        verified = verified.concat(r2.verified);
+        allRejected.push(...r2.rejected);
+      }catch(err){
+        log("補充要求に失敗: " + err.message, "ng");
+      }
+    }
+
+    /* --- [5] 表示 --- */
+    log("完了: 通過 " + verified.length + " 曲 / 棄却 " + allRejected.length + " 曲", "ok");
+    renderResults(verified);
+    renderRejects(allRejected);
+  }catch(err){
+    log("エラー: " + err.message, "ng");
+    resultsBox.innerHTML = '<div class="note">エラーのため中断しました。</div>';
+    rejectsBox.innerHTML = '<div class="note">-</div>';
+  }finally{
+    goBtn.disabled = false;
+    goBtn.textContent = "選曲開始";
+  }
+});
+</script>
+</body>
+</html>
